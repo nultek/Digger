@@ -12,35 +12,44 @@ function Application(canvas) {
     this._soundPlayer.load("stone", resourceMap["stone.wav"]);
     this._soundPlayer.load("step", resourceMap["step.wav"]);
     var self = this;
-    self.loadImage(resourceMap["font.gif"], function (fontImage) {
-        self._fontImage = fontImage;
-        self.loadImage(resourceMap["sprite.gif"], function (spriteImage) {
-            self._spriteImage = spriteImage;
-            self.start();
-        });
-    });
-};
-Application.prototype.loadImage = function (data, callback) {
-    var image = new Image();
-    image.onload = function () {
-        callback(image);
-    };
-    image.src = 'data:image/gif;base64,' + data;
+    var count = 2; 
+    function onload() {
+    	if (--count == 0) {
+    		self.start();
+    	}
+    }
+    this._fontImage = new Image();
+    this._spriteImage = new Image();
+    this._fontImage.onload = onload;
+    this._spriteImage.onload = onload;
+    this._fontImage.src = 'data:image/gif;base64,' + resourceMap["font.gif"];
+    this._spriteImage.src = 'data:image/gif;base64,' + resourceMap["sprite.gif"];
 };
 Application.prototype.start = function () {
     var self = this;
     this.drawText(0, 8, "  ROOM:     TIME:        DIAMONDS:      ");
     this.drawText(0, 16, "  LIVES:    SCORE:       COLLECTED:     ");
-    this._screenTable = [];
+    this._screen = [];
     for (var x = 0; x < 20; x++) {
-        this._screenTable[x] = [];
+        this._screen[x] = [];
         for (var y = 0; y < 14; y++) {
-            this._screenTable[x][y] = 0;
+            this._screen[x][y] = 0;
         }
     }
-    this._inputHandler = new InputHandler(this._canvas, this);
+    this._mouseDownHandler = function (e) { self.mouseDown(e); };
+    this._touchStartHandler = function (e) { self.touchStart(e); };
+    this._touchEndHandler = function (e) { self.touchEnd(e); };
+    this._touchMoveHandler = function (e) { self.touchMove(e); };
+    this._keyDownHandler = function (e) { self.keyDown(e); };
+    this._keyUpHandler = function (e) { self.keyUp(e); };
+    this._canvas.addEventListener("touchstart", this._touchStartHandler, false);
+    this._canvas.addEventListener("touchmove", this._touchMoveHandler, false);
+    this._canvas.addEventListener("touchend", this._touchEndHandler, false);
+    this._canvas.addEventListener("mousedown", this._mouseDownHandler, false);
+    document.addEventListener("keydown", this._keyDownHandler, false);
+    document.addEventListener("keyup", this._keyUpHandler, false);
     this._blink = 0;
-    this.restart();
+    this.reset();
     window.setInterval(function () { return self.interval(); }, 50);
 };
 Application.prototype.addKey = function (key) {
@@ -53,7 +62,7 @@ Application.prototype.addKey = function (key) {
             this.loadLevel();
         }
         else {
-            this.restart();
+            this.reset();
         }
     }
 };
@@ -62,7 +71,7 @@ Application.prototype.removeKey = function (key) {
         this._keysRelease[key] = true;
     }
 };
-Application.prototype.restart = function () {
+Application.prototype.reset = function () {
     this._lives = 20;
     this._score = 0;
     this._room = 0;
@@ -113,7 +122,8 @@ Application.prototype.interval = function () {
             }
         }
     }
-    this._score += this._level.updateScore();
+    this._score += this._level.score;
+    this._level.score = 0;
     this.paint();
 };
 Application.prototype.paint = function () {
@@ -130,8 +140,8 @@ Application.prototype.paint = function () {
     for (var x = 0; x < 20; x++) {
         for (var y = 0; y < 14; y++) {
             var spriteIndex = this._level.getSpriteIndex(x, y, blink);
-            if (this._screenTable[x][y] != spriteIndex) {
-                this._screenTable[x][y] = spriteIndex;
+            if (this._screen[x][y] != spriteIndex) {
+                this._screen[x][y] = spriteIndex;
                 this._context.drawImage(this._spriteImage, spriteIndex * 16 * 2, 0, 16 * 2, 16 * 2, x * 16 * 2, y * (16 * 2) + (32 * 2), 16 * 2, 16 * 2);
             }
         }
@@ -152,6 +162,97 @@ Application.prototype.formatNumber = function (value, digits) {
     }
     return text;
 };
+Application.prototype.keyDown = function (e) {
+    if (!e.ctrlKey && !e.altKey && !e.altKey && !e.metaKey) {
+        var keyMap = { "37": Key.left, "39": Key.right, "38": Key.up, "40": Key.down, "27": Key.reset };
+        if (e.keyCode in keyMap) {
+            this.stopEvent(e);
+            this.addKey(keyMap[e.keyCode]);
+        }
+        else if (e.keyCode == 8 || e.keyCode == 36) {
+            this.stopEvent(e);
+            this.nextLevel();
+        }
+        else if (!this.isPlayerAlive()) {
+            this.stopEvent(e);
+            this.addKey(Key.reset);
+        }
+    }
+};
+Application.prototype.keyUp = function (e) {
+    var keyMap = { "37": Key.left, "39": Key.right, "38": Key.up, "40": Key.down };
+    if (e.keyCode in keyMap) {
+        this.stopEvent(e);
+        this.removeKey(keyMap[e.keyCode]);
+    }
+};
+Application.prototype.mouseDown = function (e) {
+    e.preventDefault();
+    this._canvas.focus();
+};
+Application.prototype.touchStart = function (e) {
+    e.preventDefault();
+    if (e.touches.length > 3) {
+        this.nextLevel();
+    }
+    else if ((e.touches.length > 2) || (!this.isPlayerAlive())) {
+        this.addKey(Key.reset);
+    }
+    else {
+        for (var i = 0; i < e.touches.length; i++) {
+            this._touchPosition = new Position(e.touches[i].pageX, e.touches[i].pageY);
+        }
+    }
+};
+Application.prototype.touchMove = function (e) {
+    e.preventDefault();
+    for (var i = 0; i < e.touches.length; i++) {
+        if (this._touchPosition !== null) {
+            var x = e.touches[i].pageX;
+            var y = e.touches[i].pageY;
+            var direction = null;
+            if ((this._touchPosition.x - x) > 20) {
+                direction = Key.left;
+            }
+            else if ((this._touchPosition.x - x) < -20) {
+                direction = Key.right;
+            }
+            else if ((this._touchPosition.y - y) > 20) {
+                direction = Key.up;
+            }
+            else if ((this._touchPosition.y - y) < -20) {
+                direction = Key.down;
+            }
+            if (direction !== null) {
+                this._touchPosition = new Position(x, y);
+                for (var i = Key.left; i <= Key.down; i++) {
+                    if (direction == i) {
+                        this.addKey(i);
+                    }
+                    else {
+                        this.removeKey(i);
+                    }
+                }
+            }
+        }
+    }
+};
+Application.prototype.touchEnd = function (e) {
+    e.preventDefault();
+    this._touchPosition = null;
+    this.removeKey(Key.left);
+    this.removeKey(Key.right);
+    this.removeKey(Key.up);
+    this.removeKey(Key.down);
+};
+Application.prototype.stopEvent = function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+};
+
+var Key = {
+    "left": 0, "right": 1, "up": 2, "down": 3, "reset": 4
+}
 
 function Base64Reader(data) {
     this._alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
@@ -175,7 +276,7 @@ Base64Reader.prototype.readByte = function () {
             }
             this._bitsLength += 6;
         }
-        if ((this._position >= this._data.length) && (this._bitsLength === 0)) {
+        if (this._position >= this._data.length && this._bitsLength === 0) {
             return -1;
         }
         tailBits = (tailBits === 6) ? 8 : (tailBits === 12) ? 16 : tailBits;
@@ -201,155 +302,16 @@ Ghost.prototype.getImageIndex = function () {
     return [4, 4, 5, 6, 3][this.direction];
 };
 
-var Key = {
-    "left": 0, "right": 1, "up": 2, "down": 3, "reset": 4
-}
-
-function InputHandler(canvas, application) {
-    var self = this;
-    this._canvas = canvas;
-    this._application = application;
-    this._mouseDownHandler = function (e) { self.mouseDown(e); };
-    this._touchStartHandler = function (e) { self.touchStart(e); };
-    this._touchEndHandler = function (e) { self.touchEnd(e); };
-    this._touchMoveHandler = function (e) { self.touchMove(e); };
-    this._keyDownHandler = function (e) { self.keyDown(e); };
-    this._keyUpHandler = function (e) { self.keyUp(e); };
-    this._canvas.addEventListener("touchstart", this._touchStartHandler, false);
-    this._canvas.addEventListener("touchmove", this._touchMoveHandler, false);
-    this._canvas.addEventListener("touchend", this._touchEndHandler, false);
-    this._canvas.addEventListener("mousedown", this._mouseDownHandler, false);
-    document.addEventListener("keydown", this._keyDownHandler, false);
-    document.addEventListener("keyup", this._keyUpHandler, false);
-};
-InputHandler.prototype.keyDown = function (e) {
-    if (!e.ctrlKey && !e.altKey && !e.altKey && !e.metaKey) {
-        switch (e.keyCode) {
-            case 37:
-                this.stopEvent(e);
-                this._application.addKey(Key.left);
-                break;
-            case 39:
-                this.stopEvent(e);
-                this._application.addKey(Key.right);
-                break;
-            case 38:
-                this.stopEvent(e);
-                this._application.addKey(Key.up);
-                break;
-            case 40:
-                this.stopEvent(e);
-                this._application.addKey(Key.down);
-                break;
-            case 27:
-                this.stopEvent(e);
-                this._application.addKey(Key.reset);
-                break;
-            case 8: // backspace
-            case 36:
-                this.stopEvent(e);
-                this._application.nextLevel();
-                break;
-            default:
-                if (!this._application.isPlayerAlive()) {
-                    this.stopEvent(e);
-                    this._application.addKey(Key.reset);
-                }
-                break;
-        }
-    }
-};
-InputHandler.prototype.keyUp = function (e) {
-    switch (e.keyCode) {
-        case 37:
-            this._application.removeKey(Key.left);
-            break;
-        case 39:
-            this._application.removeKey(Key.right);
-            break;
-        case 38:
-            this._application.removeKey(Key.up);
-            break;
-        case 40:
-            this._application.removeKey(Key.down);
-            break;
-    }
-};
-InputHandler.prototype.mouseDown = function (e) {
-    e.preventDefault();
-    this._canvas.focus();
-};
-InputHandler.prototype.touchStart = function (e) {
-    e.preventDefault();
-    if (e.touches.length > 3) {
-        this._application.nextLevel();
-    }
-    else if ((e.touches.length > 2) || (!this._application.isPlayerAlive())) {
-        this._application.addKey(Key.reset);
-    }
-    else {
-        for (var i = 0; i < e.touches.length; i++) {
-            this._touchPosition = new Position(e.touches[i].pageX, e.touches[i].pageY);
-        }
-    }
-};
-InputHandler.prototype.touchMove = function (e) {
-    e.preventDefault();
-    for (var i = 0; i < e.touches.length; i++) {
-        if (this._touchPosition !== null) {
-            var x = e.touches[i].pageX;
-            var y = e.touches[i].pageY;
-            var direction = null;
-            if ((this._touchPosition.x - x) > 20) {
-                direction = Key.left;
-            }
-            else if ((this._touchPosition.x - x) < -20) {
-                direction = Key.right;
-            }
-            else if ((this._touchPosition.y - y) > 20) {
-                direction = Key.up;
-            }
-            else if ((this._touchPosition.y - y) < -20) {
-                direction = Key.down;
-            }
-            if (direction !== null) {
-                this._touchPosition = new Position(x, y);
-                for (var i = Key.left; i <= Key.down; i++) {
-                    if (direction == i) {
-                        this._application.addKey(i);
-                    }
-                    else {
-                        this._application.removeKey(i);
-                    }
-                }
-            }
-        }
-    }
-};
-InputHandler.prototype.touchEnd = function (e) {
-    e.preventDefault();
-    this._touchPosition = null;
-    this._application.removeKey(Key.left);
-    this._application.removeKey(Key.right);
-    this._application.removeKey(Key.up);
-    this._application.removeKey(Key.down);
-};
-InputHandler.prototype.stopEvent = function (e) {
-    e.preventDefault();
-    e.stopPropagation();
-};
-
 var Sprite = {
     "nothing": 0, "stone": 1, "ground": 2, "ghost180": 3, "uvexit": 4, 
-    "diamond": 5, "wall": 6, "ghost90L": 7, "marker": 8, "uvstone": 9,
-    "player": 10, "ghost90LR": 11, "exit": 12, "buffer": 13, "changer": 14,
-    "ghost90R": 15,
+    "diamond": 5, "wall": 6, "ghost90L": 7, "marker": 8, "uvstone": 9, "player": 10,
+    "ghost90LR": 11, "exit": 12, "buffer": 13, "changer": 14, "ghost90R": 15,
 };
 
 function Level(data) {
     this.collected = 0;
     this.time = 5000;
-    this._score = 0;
+    this.score = 0;
     this._map = [];
     for (var x = 0; x < 20; x++) {
         this._map[x] = [];
@@ -378,10 +340,10 @@ function Level(data) {
     this._ghosts = [];
     for (var y = 0; y < 14; y++) {
         for (var x = 0; x < 20; x++) {
-            if ((this._map[x][y] === Sprite.ghost90L) || (this._map[x][y] === Sprite.ghost90R) || (this._map[x][y] === Sprite.ghost90LR) || (this._map[x][y] === Sprite.ghost180)) {
-                var info = ((index & 1) !== 0) ? (ghostData[index >> 1] & 0x0f) : (ghostData[index >> 1] >> 4);
-                var direction = (info < 4) ? [Direction.down, Direction.up, Direction.right, Direction.left][info] : Direction.none;
-                var lastTurn = ((index & 1) !== 0) ? Direction.right : Direction.left;
+            if (this.isGhost(x, y)) {
+                var info = index & 1 !== 0 ? (ghostData[index >> 1] & 0x0f) : (ghostData[index >> 1] >> 4);
+                var direction = info < 4 ? [Direction.down, Direction.up, Direction.right, Direction.left][info] : Direction.none;
+                var lastTurn = index & 1 !== 0 ? Direction.right : Direction.left;
                 this._ghosts.push(new Ghost(new Position(x, y), this._map[x][y], direction, lastTurn));
                 index++;
             }
@@ -390,11 +352,6 @@ function Level(data) {
 };
 Level.prototype.isPlayerAlive = function () {
     return this._player.alive;
-};
-Level.prototype.updateScore = function () {
-    var score = this._score;
-    this._score = 0;
-    return score;
 };
 Level.prototype.update = function () {
     // turn buffers into nothing
@@ -415,19 +372,19 @@ Level.prototype.move = function () {
     // gravity for stones and diamonds
     for (var y = 13; y >= 0; y--) {
         for (var x = 19; x >= 0; x--) {
-            if ((this._map[x][y] === Sprite.stone) || (this._map[x][y] === Sprite.diamond) || (this._map[x][y] === Sprite.uvstone)) {
+            if (this._map[x][y] === Sprite.stone || this._map[x][y] === Sprite.diamond || this._map[x][y] === Sprite.uvstone) {
                 var dx = x;
                 var dy = y;
                 if (this._map[x][y + 1] === Sprite.nothing) {
                     dy = y + 1;
                 }
                 else {
-                    if ((this._map[x][y + 1] === Sprite.stone) || (this._map[x][y + 1] === Sprite.diamond)) {
-                        if ((this._map[x - 1][y + 1] === Sprite.nothing) && (this._map[x - 1][y] === Sprite.nothing)) {
+                    if (this._map[x][y + 1] === Sprite.stone || this._map[x][y + 1] === Sprite.diamond) {
+                        if (this._map[x - 1][y + 1] === Sprite.nothing && this._map[x - 1][y] === Sprite.nothing) {
                             dx = x - 1;
                             dy = y + 1;
                         }
-                        else if ((this._map[x + 1][y + 1] === Sprite.nothing) && (this._map[x + 1][y] === Sprite.nothing)) {
+                        else if (this._map[x + 1][y + 1] === Sprite.nothing && this._map[x + 1][y] === Sprite.nothing) {
                             dx = x + 1;
                             dy = y + 1;
                         }
@@ -436,7 +393,7 @@ Level.prototype.move = function () {
                         dy = y + 2;
                     }
                 }
-                if ((dx != x) || (dy != y)) {
+                if (dx != x || dy != y) {
                     this._map[dx][dy] = Sprite.marker;
                 }
             }
@@ -444,7 +401,7 @@ Level.prototype.move = function () {
     }
     for (var y = 13; y >= 0; y--) {
         for (var x = 19; x >= 0; x--) {
-            if ((this._map[x][y] === Sprite.stone) || (this._map[x][y] === Sprite.diamond) || (this._map[x][y] === Sprite.uvstone)) {
+            if (this._map[x][y] === Sprite.stone || this._map[x][y] === Sprite.diamond || this._map[x][y] === Sprite.uvstone) {
                 var dx = x;
                 var dy = y;
                 if (this._map[x][y + 1] === Sprite.marker) {
@@ -465,7 +422,7 @@ Level.prototype.move = function () {
                         dy = y + 2;
                     }
                 }
-                if ((dx != x) || (dy != y)) {
+                if (dx != x || dy != y) {
                     if ((dy - y) === 2) {
                         this._map[dx][dy] = Sprite.diamond;
                     }
@@ -476,7 +433,7 @@ Level.prototype.move = function () {
                         }
                     }
                     this._map[x][y] = Sprite.nothing;
-                    if ((this._map[dx][dy + 1] === Sprite.stone) || (this._map[dx][dy + 1] === Sprite.diamond) || (this._map[dx][dy + 1] === Sprite.wall) || (this.isGhost(dx, dy + 1))) {
+                    if (this._map[dx][dy + 1] === Sprite.stone || this._map[dx][dy + 1] === Sprite.diamond || this._map[dx][dy + 1] === Sprite.wall || this.isGhost(dx, dy + 1)) {
                         this._soundTable[Sound.stone] = true;
                     }
                     if (this.isPlayer(dx, dy + 1)) {
@@ -533,7 +490,7 @@ Level.prototype.movePlayer = function (keys) {
             }
             if (this._map[z.x][z.y] === Sprite.diamond) {
                 this.collected += 1;
-                this._score += 3;
+                this.score += 3;
                 this._soundTable[Sound.diamond] = true;
             }
             if (this._map[z.x][z.y] === Sprite.stone) {
@@ -552,12 +509,12 @@ Level.prototype.movePlayer = function (keys) {
                     this._player.stone[0] = !this._player.stone[0];
                 }
             }
-            if ((this._map[z.x][z.y] === Sprite.nothing) || (this._map[z.x][z.y] === Sprite.ground) || (this._map[z.x][z.y] === Sprite.diamond)) {
+            if (this._map[z.x][z.y] === Sprite.nothing || this._map[z.x][z.y] === Sprite.ground || this._map[z.x][z.y] === Sprite.diamond) {
                 this.placePlayer(z.x, z.y);
                 this._map[d.x][d.y] = Sprite.buffer;
                 this._soundTable[Sound.step] = true;
             }
-            if ((this._map[z.x][z.y] === Sprite.exit) || (this._map[z.x][z.y] === Sprite.uvexit)) {
+            if (this._map[z.x][z.y] === Sprite.exit || this._map[z.x][z.y] === Sprite.uvexit) {
                 if (this.collected >= this.diamonds) {
                     return true; // next level
                 }
@@ -580,13 +537,13 @@ Level.prototype.placePlayer = function (x, y) {
     this._player.position.y = y;
 };
 Level.prototype.isGhost = function (x, y) {
-    return (this._map[x][y] == Sprite.ghost90L) || (this._map[x][y] == Sprite.ghost90R) || (this._map[x][y] == Sprite.ghost90LR) || (this._map[x][y] == Sprite.ghost180);
+    return this._map[x][y] === Sprite.ghost90L || this._map[x][y] === Sprite.ghost90R || this._map[x][y] === Sprite.ghost90LR || this._map[x][y] === Sprite.ghost180;
 };
 Level.prototype.moveGhost = function (ghost) {
     if (ghost.alive) {
         var p = ghost.position.clone();
         var w = [p.clone(), p.clone(), p.clone(), p.clone()];
-        if ((ghost.type === Sprite.ghost180) || (ghost.type === Sprite.ghost90L) || (ghost.type === Sprite.ghost90R)) {
+        if (ghost.type === Sprite.ghost180 || ghost.type === Sprite.ghost90L || ghost.type === Sprite.ghost90R) {
             if (ghost.type === Sprite.ghost180) {
                 if (ghost.direction === Direction.left) {
                     w[0].x--; w[1].x++;
@@ -770,7 +727,7 @@ Level.prototype.killGhost = function (x, y) {
                     else {
                         if (this.isGhost(dx, dy)) {
                             this.ghost(dx, dy).alive = false;
-                            this._score += 99;
+                            this.score += 99;
                         }
                         this._map[dx][dy] = Sprite.nothing;
                     }
@@ -815,7 +772,7 @@ Level.prototype.getSpriteIndex = function (x, y, blink) {
         case Sprite.ghost180:
             return this.ghost(x, y).getImageIndex();
         case Sprite.player:
-            if ((x == this._player.position.x) && (y == this._player.position.y)) {
+            if (x == this._player.position.x && y == this._player.position.y) {
                 return this._player.getImageIndex();
             }
             return 15;
@@ -868,14 +825,13 @@ function Position(x, y) {
     this.y = y;
 };
 Position.prototype.equals = function (position) {
-    return (this.x == position.x) && (this.y == position.y);
+    return (this.x == position.x && this.y == position.y);
 };
 Position.prototype.clone = function () {
     return new Position(this.x, this.y);
 };
 
-var Sound =
-{
+var Sound = {
     "diamond": 0, "stone": 1, "step": 2
 };
 
